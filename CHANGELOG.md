@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.5] - 2026-07-26
+
+### Release Overview
+- Skill notes and GitHub repository filtering make large libraries easier to scan, search, and organize.
+
+### User-facing
+- **Add notes directly from skill cards** — A Pencil action next to Inspect opens a multiline editor for a skill-specific note. Notes can be updated or cleared and are limited to 500 characters.
+- **Filter the library by GitHub repository** — A searchable single-select filter groups equivalent Git, SSH, and `skills.sh` sources under the normalized `owner/repo` name.
+- **See and search notes across workspaces** — The skill library, global workspace, and project workspace prefer the user-authored note over the original description and include it in search.
+
+### Developer & Governance
+- Notes persist in SQLite schema v8 and per-skill `.skills-manager/skills/<id>.json` metadata, so Git backup, restore, and merge flows preserve them.
+- This fork now uses an independent Tauri updater signing identity and the `maqibg/skills-manager` release endpoint. Release workflows also support first-tag releases, explicit tag retries, and complete staging of generated release files.
+
 ## [1.28.4] - 2026-07-26
 
 ### Release Overview
