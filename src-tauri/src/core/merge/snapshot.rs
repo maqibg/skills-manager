@@ -37,7 +37,7 @@ pub struct SkillObj {
 /// Component-level equality (§2): `content` / `path` / `attrs` are compared
 /// independently.
 pub fn attrs_eq(a: &SkillMetaFile, b: &SkillMetaFile) -> bool {
-    a.enabled == b.enabled && a.tags == b.tags && a.source == b.source
+    a.enabled == b.enabled && a.tags == b.tags && a.note == b.note && a.source == b.source
 }
 
 pub fn skill_identical(a: &SkillObj, b: &SkillObj) -> bool {

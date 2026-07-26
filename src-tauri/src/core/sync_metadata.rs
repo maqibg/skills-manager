@@ -40,6 +40,8 @@ pub struct SkillMetaFile {
     pub path_key: String,
     pub enabled: bool,
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub source: SourceMeta,
 }
 
@@ -215,6 +217,7 @@ pub(crate) fn reindex_from_metadata_unlocked(store: &SkillStore) -> Result<()> {
         };
         store.upsert_skill(&record)?;
         store.set_tags_for_skill(&meta.skill_id, &meta.tags)?;
+        store.set_skill_note(&meta.skill_id, meta.note.as_deref())?;
     }
 
     if has_complete_scenario_snapshot {
@@ -238,7 +241,8 @@ pub(crate) fn ensure_skill_metadata_unlocked(store: &SkillStore, skill_id: &str)
         .get_skill_by_id(skill_id)?
         .ok_or_else(|| anyhow!("skill not found: {skill_id}"))?;
     let tags = store.get_tags_map()?.remove(skill_id).unwrap_or_default();
-    write_skill_file(&skill, &tags)
+    let note = store.get_skill_notes_map()?.remove(skill_id);
+    write_skill_file(&skill, &tags, note.as_deref())
 }
 
 pub fn cleanup_temporary_files() -> Result<()> {
@@ -281,8 +285,11 @@ fn metadata_has_complete_scenario_snapshot() -> bool {
 
 fn write_skill_records_from_db(store: &SkillStore) -> Result<()> {
     let mut tags = store.get_tags_map()?;
+    let mut notes = store.get_skill_notes_map()?;
     for skill in store.get_all_skills()? {
-        write_skill_file(&skill, &tags.remove(&skill.id).unwrap_or_default())?;
+        let skill_tags = tags.remove(&skill.id).unwrap_or_default();
+        let note = notes.remove(&skill.id);
+        write_skill_file(&skill, &skill_tags, note.as_deref())?;
     }
     Ok(())
 }
@@ -396,7 +403,7 @@ fn remove_stale_json_files(dir: &Path, expected_stems: &HashSet<String>) -> Resu
     Ok(())
 }
 
-fn write_skill_file(skill: &SkillRecord, tags: &[String]) -> Result<()> {
+fn write_skill_file(skill: &SkillRecord, tags: &[String], note: Option<&str>) -> Result<()> {
     let path = relative_skill_path(&skill.central_path)?;
     let tags = sorted_tags(tags);
     let source_ref = match skill.source_type.as_str() {
@@ -410,6 +417,7 @@ fn write_skill_file(skill: &SkillRecord, tags: &[String]) -> Result<()> {
         path,
         enabled: skill.enabled,
         tags,
+        note: note.map(str::to_string),
         source: SourceMeta {
             source_type: skill.source_type.clone(),
             ref_: source_ref,
@@ -743,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_reindex_preserves_skill_id_and_tags() {
+    fn metadata_reindex_preserves_skill_id_tags_and_note() {
         let source = test_repo();
         let skill_dir = write_skill_dir("example-skill");
         source
@@ -753,6 +761,10 @@ mod tests {
         source
             .store
             .set_tags_for_skill("skill-1", &["tag-b".to_string(), "tag-a".to_string()])
+            .unwrap();
+        source
+            .store
+            .set_skill_note("skill-1", Some("Personal workflow note"))
             .unwrap();
         write_all_from_db_unlocked(&source.store).unwrap();
 
@@ -772,6 +784,14 @@ mod tests {
                 .remove("skill-1")
                 .unwrap(),
             vec!["tag-a".to_string(), "tag-b".to_string()]
+        );
+        assert_eq!(
+            restored_store
+                .get_skill_notes_map()
+                .unwrap()
+                .remove("skill-1")
+                .as_deref(),
+            Some("Personal workflow note")
         );
     }
 

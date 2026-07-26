@@ -9,6 +9,7 @@ use super::crypto;
 
 /// Settings keys whose values are encrypted at rest with AES-256-GCM.
 const SENSITIVE_KEYS: &[&str] = &["proxy_url", "git_backup_remote_url"];
+pub const MAX_SKILL_NOTE_CHARS: usize = 500;
 
 pub struct SkillStore {
     conn: Mutex<Connection>,
@@ -1264,6 +1265,46 @@ impl SkillStore {
         Ok(map)
     }
 
+    // ── Skill Notes ──
+
+    pub fn set_skill_note(&self, skill_id: &str, note: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let note = note.map(str::trim).filter(|note| !note.is_empty());
+        if let Some(note) = note {
+            anyhow::ensure!(
+                note.chars().count() <= MAX_SKILL_NOTE_CHARS,
+                "Skill note must be {MAX_SKILL_NOTE_CHARS} characters or fewer"
+            );
+        }
+        match note {
+            Some(note) => {
+                conn.execute(
+                    "INSERT INTO skill_notes (skill_id, note) VALUES (?1, ?2)
+                     ON CONFLICT(skill_id) DO UPDATE SET note = excluded.note",
+                    params![skill_id, note],
+                )?;
+            }
+            None => {
+                conn.execute("DELETE FROM skill_notes WHERE skill_id = ?1", params![skill_id])?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_skill_notes_map(&self) -> Result<std::collections::HashMap<String, String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT skill_id, note FROM skill_notes")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut notes = std::collections::HashMap::new();
+        for row in rows {
+            let (skill_id, note) = row?;
+            notes.insert(skill_id, note);
+        }
+        Ok(notes)
+    }
+
     /// Globally rename a tag across every skill that carries it. Returns the
     /// ids of the affected skills so the caller can refresh their metadata.
     /// If a skill already has `new`, the rows are merged (no duplicate) thanks
@@ -1593,6 +1634,31 @@ mod tag_tests {
         assert_eq!(affected, vec!["a".to_string()]);
         // The tag must survive a self-rename, not be wiped.
         assert_eq!(store.get_all_tags().unwrap(), vec!["keep".to_string()]);
+    }
+
+    #[test]
+    fn skill_note_can_be_updated_and_cleared() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        store.insert_skill(&skill("a")).unwrap();
+
+        store.set_skill_note("a", Some("first note")).unwrap();
+        assert_eq!(
+            store.get_skill_notes_map().unwrap().get("a").map(String::as_str),
+            Some("first note")
+        );
+
+        store.set_skill_note("a", Some("updated note")).unwrap();
+        assert_eq!(
+            store.get_skill_notes_map().unwrap().get("a").map(String::as_str),
+            Some("updated note")
+        );
+
+        store.set_skill_note("a", None).unwrap();
+        assert!(!store.get_skill_notes_map().unwrap().contains_key("a"));
+
+        let error = store.set_skill_note("a", Some(&"x".repeat(MAX_SKILL_NOTE_CHARS + 1)));
+        assert!(error.unwrap_err().to_string().contains("characters or fewer"));
     }
 
     #[test]

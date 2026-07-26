@@ -16,7 +16,7 @@ use crate::core::{
     repo_lock::RepoLock,
     scanner,
     skill_metadata::{self, is_valid_skill_dir},
-    skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
+    skill_store::{MAX_SKILL_NOTE_CHARS, SkillRecord, SkillStore, SkillTargetRecord},
     sync_engine, sync_metadata,
     timing::should_log_first_or_slow,
 };
@@ -47,6 +47,7 @@ pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    pub note: Option<String>,
     pub source_type: String,
     pub source_ref: Option<String>,
     pub source_ref_resolved: Option<String>,
@@ -189,10 +190,13 @@ pub async fn get_managed_skills(
         let skills = store.get_all_skills().map_err(AppError::db)?;
         let all_targets = store.get_all_targets().map_err(AppError::db)?;
         let tags_map = store.get_tags_map().map_err(AppError::db)?;
+        let notes_map = store.get_skill_notes_map().map_err(AppError::db)?;
         let count = skills.len();
         let dtos: Vec<ManagedSkillDto> = skills
             .into_iter()
-            .map(|skill| managed_skill_to_dto(&store, skill, &all_targets, &tags_map))
+            .map(|skill| {
+                managed_skill_to_dto(&store, skill, &all_targets, &tags_map, &notes_map)
+            })
             .collect();
         let elapsed_ms = start.elapsed().as_millis();
         if should_log_first_or_slow(&GET_MANAGED_SKILLS_FIRST_CALL, elapsed_ms, 100) {
@@ -215,10 +219,13 @@ pub async fn get_skills_for_preset(
             .map_err(AppError::db)?;
         let all_targets = store.get_all_targets().map_err(AppError::db)?;
         let tags_map = store.get_tags_map().map_err(AppError::db)?;
+        let notes_map = store.get_skill_notes_map().map_err(AppError::db)?;
 
         Ok(skills
             .into_iter()
-            .map(|skill| managed_skill_to_dto(&store, skill, &all_targets, &tags_map))
+            .map(|skill| {
+                managed_skill_to_dto(&store, skill, &all_targets, &tags_map, &notes_map)
+            })
             .collect())
     })
     .await?
@@ -1388,6 +1395,7 @@ fn managed_skill_to_dto(
     skill: SkillRecord,
     all_targets: &[SkillTargetRecord],
     tags_map: &std::collections::HashMap<String, Vec<String>>,
+    notes_map: &std::collections::HashMap<String, String>,
 ) -> ManagedSkillDto {
     let targets = all_targets
         .iter()
@@ -1405,6 +1413,7 @@ fn managed_skill_to_dto(
 
     let preset_ids = store.get_scenarios_for_skill(&skill.id).unwrap_or_default();
     let tags = tags_map.get(&skill.id).cloned().unwrap_or_default();
+    let note = notes_map.get(&skill.id).cloned();
 
     // Prefer description from SKILL.md so the list view reflects edits made
     // directly on disk (file watcher emits a change event; this read serves
@@ -1419,6 +1428,7 @@ fn managed_skill_to_dto(
         id: skill.id,
         name: skill.name,
         description,
+        note,
         source_type: skill.source_type,
         source_ref: skill.source_ref,
         source_ref_resolved: skill.source_ref_resolved,
@@ -1447,7 +1457,14 @@ pub fn managed_skill_by_id(store: &SkillStore, skill_id: &str) -> Result<Managed
         .ok_or_else(|| AppError::not_found("Skill not found"))?;
     let all_targets = store.get_all_targets().map_err(AppError::db)?;
     let tags_map = store.get_tags_map().map_err(AppError::db)?;
-    Ok(managed_skill_to_dto(store, skill, &all_targets, &tags_map))
+    let notes_map = store.get_skill_notes_map().map_err(AppError::db)?;
+    Ok(managed_skill_to_dto(
+        store,
+        skill,
+        &all_targets,
+        &tags_map,
+        &notes_map,
+    ))
 }
 
 pub fn update_git_skill_internal(
@@ -2134,6 +2151,38 @@ pub async fn set_skill_tags(
     .await?
 }
 
+#[tauri::command]
+pub async fn set_skill_note(
+    skill_id: String,
+    note: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    let note = normalize_skill_note(&note)?;
+
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if store.get_skill_by_id(&skill_id).map_err(AppError::db)?.is_none() {
+            return Err(AppError::not_found("Skill not found"));
+        }
+        sync_metadata::with_repo_lock("set skill note", || {
+            store.set_skill_note(&skill_id, note.as_deref())?;
+            sync_metadata::ensure_skill_metadata_unlocked(&store, &skill_id)
+        })
+        .map_err(AppError::db)
+    })
+    .await?
+}
+
+fn normalize_skill_note(note: &str) -> Result<Option<String>, AppError> {
+    let note = note.trim();
+    if note.chars().count() > MAX_SKILL_NOTE_CHARS {
+        return Err(AppError::invalid_input(format!(
+            "Skill note must be {MAX_SKILL_NOTE_CHARS} characters or fewer"
+        )));
+    }
+    Ok((!note.is_empty()).then(|| note.to_string()))
+}
+
 /// Globally rename a tag across all skills (used by the tag filter bar). If the
 /// new name already exists, the tags are merged.
 #[tauri::command]
@@ -2489,5 +2538,21 @@ mod tests {
         assert_ne!(k_a, k_b);
         assert_eq!(k_a, "category-a/foo");
         assert_eq!(k_b, "category-b/foo");
+    }
+
+    #[test]
+    fn normalize_skill_note_trims_and_clears_empty_values() {
+        assert_eq!(
+            normalize_skill_note("  first line\nsecond line  ").unwrap(),
+            Some("first line\nsecond line".to_string())
+        );
+        assert_eq!(normalize_skill_note(" \n ").unwrap(), None);
+    }
+
+    #[test]
+    fn normalize_skill_note_counts_unicode_characters() {
+        assert!(normalize_skill_note(&"备".repeat(500)).is_ok());
+        let error = normalize_skill_note(&"备".repeat(501)).unwrap_err();
+        assert_eq!(error.kind, crate::core::error::ErrorKind::InvalidInput);
     }
 }

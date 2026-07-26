@@ -29,6 +29,7 @@ import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { getTagActiveColor, getTagColor, UNTAGGED_FILTER } from "../lib/skillTags";
+import { getSkillSummaryLine } from "../lib/skillPresentation";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import type { WorkspaceConfig } from "./workspaceConfigs";
 
@@ -84,7 +85,10 @@ function WorkspaceSkillCard({
         >
           {title}
         </h3>
-        <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
+        <p
+          className="min-w-0 flex-1 truncate text-[13px] text-muted"
+          title={description || undefined}
+        >
           {description || "-"}
         </p>
         {tags.length > 0 && (
@@ -150,7 +154,10 @@ function WorkspaceSkillCard({
         )}
       </div>
       <div className="px-3.5 pb-3">
-        <p className="truncate text-[13px] leading-[18px] text-muted">
+        <p
+          className="truncate text-[13px] leading-[18px] text-muted"
+          title={description || undefined}
+        >
           {description || "-"}
         </p>
         {tags.length > 0 && (
@@ -386,6 +393,11 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     [agentKey, managedSkills]
   );
 
+  const managedSkillById = useMemo(
+    () => new Map(managedSkills.map((skill) => [skill.id, skill])),
+    [managedSkills]
+  );
+
   const allLocalTags = useMemo(() => {
     const tags = new Set<string>();
     for (const skill of localSkills) {
@@ -401,9 +413,13 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
     return localSkills
       .filter((skill) => {
         if (q) {
+          const managedNote = skill.center_skill_id
+            ? managedSkillById.get(skill.center_skill_id)?.note || ""
+            : "";
           const matchesQuery =
             skill.name.toLowerCase().includes(q) ||
             skill.dir_name.toLowerCase().includes(q) ||
+            managedNote.toLowerCase().includes(q) ||
             (skill.description || "").toLowerCase().includes(q);
           if (!matchesQuery) return false;
         }
@@ -428,7 +444,7 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           a.name.localeCompare(b.name)
         );
       });
-  }, [localSkills, search, tagFilters]);
+  }, [localSkills, managedSkillById, search, tagFilters]);
 
   const inSyncLocalCount = useMemo(
     () => localSkills.filter((skill) => skill.sync_status === "in_sync").length,
@@ -947,13 +963,20 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
           {visibleLocalSkills.map((skill) => {
             const statusMeta = getLocalStatusMeta(t, skill.sync_status);
             const isManaged = !!skill.center_skill_id && managedLocalIds.has(skill.center_skill_id);
+            const managedSkill = skill.center_skill_id
+              ? managedSkillById.get(skill.center_skill_id)
+              : null;
+            const summary = getSkillSummaryLine({
+              note: managedSkill?.note || null,
+              description: skill.description,
+            });
 
             return (
               <WorkspaceSkillCard
                 key={`${skill.agent}:${skill.relative_path}`}
                 viewMode={viewMode}
                 title={skill.name}
-                description={skill.description || skill.relative_path}
+                description={summary || skill.relative_path}
                 tags={skill.tags.map((tag) => ({ label: tag, className: getTagColor(tag, allLocalTags) }))}
                 status={statusMeta}
                 fileCount={skill.files.length}
@@ -985,7 +1008,16 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
       <DetailSheet
         open={!!localDetailSkill}
         title={localDetailSkill?.name ?? ""}
-        description={localDetailSkill?.description}
+        description={
+          localDetailSkill?.center_skill_id &&
+          managedSkillById.get(localDetailSkill.center_skill_id)?.note
+            ? (
+                <p className="whitespace-pre-wrap">
+                  {managedSkillById.get(localDetailSkill.center_skill_id)?.note}
+                </p>
+              )
+            : localDetailSkill?.description
+        }
         meta={
           localDetailSkill ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -1000,6 +1032,17 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
         }
         onClose={() => setLocalDetailSkill(null)}
       >
+        {localDetailSkill?.description &&
+          localDetailSkill.center_skill_id &&
+          managedSkillById.get(localDetailSkill.center_skill_id)?.note && (
+            <div className="mb-4 border-l-2 border-border px-3 py-1">
+              <div className="mb-1 text-[11px] font-medium text-muted">
+                {t("mySkills.note.originalDescription")}
+              </div>
+              <p className="text-[13px] leading-5 text-secondary">{localDetailSkill.description}</p>
+            </div>
+          )}
+
         {localDetailSkill?.center_skill_id && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
             {(["local", "diff", "center"] as const).map((tab) => (

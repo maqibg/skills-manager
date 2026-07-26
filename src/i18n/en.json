@@ -386,6 +386,23 @@
       "git": "Git",
       "skillssh": "skills.sh"
     },
+    "repositoryFilter": {
+      "trigger": "GitHub repository",
+      "all": "All GitHub repositories",
+      "search": "Search repositories...",
+      "empty": "No matching repositories",
+      "skillCount": "{{count}} skills"
+    },
+    "note": {
+      "label": "Note",
+      "edit": "Edit note",
+      "placeholder": "Briefly describe what this skill is for...",
+      "characterCount": "{{count}} / {{max}}",
+      "tooLong": "Maximum {{max}} characters (currently {{count}})",
+      "saved": "Note saved",
+      "saveFailed": "Failed to save note",
+      "originalDescription": "Original description"
+    },
     "tags": {
       "filter": "Tags",
       "allTags": "All Tags",

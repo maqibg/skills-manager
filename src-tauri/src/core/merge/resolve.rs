@@ -179,6 +179,7 @@ fn apply_use_remote(
         path: target_path,
         enabled: theirs_skill.meta.enabled,
         tags: theirs_skill.meta.tags.clone(),
+        note: theirs_skill.meta.note.clone(),
         source: theirs_skill.meta.source.clone(),
     };
     write_worktree_meta(skills_dir, &meta)
@@ -224,6 +225,7 @@ fn apply_keep_both(
         path: target_path,
         enabled: theirs_skill.meta.enabled,
         tags: theirs_skill.meta.tags.clone(),
+        note: theirs_skill.meta.note.clone(),
         source: theirs_skill.meta.source.clone(),
     };
     write_worktree_meta(skills_dir, &meta)

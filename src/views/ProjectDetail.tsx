@@ -37,6 +37,7 @@ import { cn } from "../utils";
 import * as api from "../lib/tauri";
 import type { ProjectSkill, ManagedSkill, ProjectAgentTarget } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { getSkillSummaryLine } from "../lib/skillPresentation";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 
 const PROJECT_DEFAULT_EXPORT_AGENTS_KEY = "project_default_export_agents";
@@ -198,6 +199,10 @@ export function ProjectDetail() {
   };
 
   const project = projects.find((p) => p.id === id);
+  const managedSkillById = useMemo(
+    () => new Map(managedSkills.map((skill) => [skill.id, skill])),
+    [managedSkills]
+  );
   const getSkillKey = useCallback((skill: Pick<ProjectSkillGroup, "id">) => {
     return skill.id;
   }, []);
@@ -290,6 +295,20 @@ export function ProjectDetail() {
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   }, [skills]);
 
+  const getProjectSkillNote = useCallback(
+    (skill: ProjectSkillGroup) => {
+      const primaryId = skill.primaryVariant.center_skill_id;
+      const primaryNote = primaryId ? managedSkillById.get(primaryId)?.note?.trim() : null;
+      if (primaryNote) return primaryNote;
+      for (const centerSkillId of skill.centerSkillIds) {
+        const note = managedSkillById.get(centerSkillId)?.note?.trim();
+        if (note) return note;
+      }
+      return null;
+    },
+    [managedSkillById]
+  );
+
   useEffect(() => {
     if (!detailSkill) return;
     const refreshed = groupedSkills.find((skill) => skill.id === detailSkill.id) ?? null;
@@ -305,8 +324,12 @@ export function ProjectDetail() {
 
   const filtered = useMemo(() => {
     return groupedSkills.filter((skill) => {
+      const noteMatches = skill.centerSkillIds.some((centerSkillId) =>
+        (managedSkillById.get(centerSkillId)?.note || "").toLowerCase().includes(search.toLowerCase())
+      );
       const matchesSearch =
         skill.name.toLowerCase().includes(search.toLowerCase()) ||
+        noteMatches ||
         (skill.description || "").toLowerCase().includes(search.toLowerCase());
       if (!matchesSearch) return false;
       if (tagFilters.size > 0) {
@@ -319,7 +342,7 @@ export function ProjectDetail() {
       if (filterMode === "disabled") return skill.enabledCount === 0;
       return true;
     });
-  }, [groupedSkills, search, filterMode, tagFilters]);
+  }, [groupedSkills, managedSkillById, search, filterMode, tagFilters]);
 
   const {
     isMultiSelect, setIsMultiSelect,
@@ -1124,8 +1147,11 @@ export function ProjectDetail() {
                   </div>
 
                   <div className="px-3.5 pb-3">
-                    <p className="text-[13px] leading-[18px] text-muted truncate">
-                      {skill.description || "\u2014"}
+                    <p
+                      className="text-[13px] leading-[18px] text-muted truncate"
+                      title={getSkillSummaryLine({ note: getProjectSkillNote(skill), description: skill.description }) || undefined}
+                    >
+                      {getSkillSummaryLine({ note: getProjectSkillNote(skill), description: skill.description }) || "\u2014"}
                     </p>
                     {skill.tags.length > 0 && (
                       <div className="mt-2 flex flex-wrap items-center gap-1">
@@ -1263,8 +1289,11 @@ export function ProjectDetail() {
                   {skill.name}
                 </h3>
 
-                <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
-                  {skill.description || "\u2014"}
+                <p
+                  className="min-w-0 flex-1 truncate text-[13px] text-muted"
+                  title={getSkillSummaryLine({ note: getProjectSkillNote(skill), description: skill.description }) || undefined}
+                >
+                  {getSkillSummaryLine({ note: getProjectSkillNote(skill), description: skill.description }) || "\u2014"}
                 </p>
 
                 {skill.tags.length > 0 && (
@@ -1393,6 +1422,7 @@ export function ProjectDetail() {
       {detailSkill && project && (
         <ProjectSkillDetailPanel
           skill={detailSkill}
+          note={getProjectSkillNote(detailSkill)}
           targets={exportTargets}
           togglingAgent={
             togglingAgentTarget?.skillKey === getSkillKey(detailSkill)
@@ -1462,6 +1492,7 @@ export function ProjectDetail() {
 
 function ProjectSkillDetailPanel({
   skill,
+  note,
   targets,
   togglingAgent,
   onToggleAgent,
@@ -1472,6 +1503,7 @@ function ProjectSkillDetailPanel({
   onClose,
 }: {
   skill: ProjectSkillGroup;
+  note: string | null;
   targets: ProjectAgentTarget[];
   togglingAgent: string | null;
   onToggleAgent: (agentKey: string, enabled: boolean) => void;
@@ -1547,10 +1579,25 @@ function ProjectSkillDetailPanel({
     <DetailSheet
       open={true}
       title={skill.name}
-      description={skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined}
+      description={
+        note
+          ? <p className="whitespace-pre-wrap">{note}</p>
+          : skill.description
+            ? <p className="line-clamp-3">{skill.description}</p>
+            : undefined
+      }
       meta={meta}
       onClose={onClose}
     >
+      {note && skill.description && (
+        <div className="mb-4 border-l-2 border-border px-3 py-1">
+          <div className="mb-1 text-[11px] font-medium text-muted">
+            {t("mySkills.note.originalDescription")}
+          </div>
+          <p className="text-[13px] leading-5 text-secondary">{skill.description}</p>
+        </div>
+      )}
+
       <AgentToggleSection
         items={toggleItems}
         togglingKey={togglingAgent}

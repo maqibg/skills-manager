@@ -311,6 +311,13 @@ function SkillDetailPanelContent({
       meta={meta}
       onClose={onClose}
     >
+      {skill.note && (
+        <div className="mb-4 border-l-2 border-accent px-3 py-1">
+          <div className="mb-1 text-[11px] font-medium text-muted">{t("mySkills.note.label")}</div>
+          <p className="whitespace-pre-wrap text-[13px] leading-5 text-secondary">{skill.note}</p>
+        </div>
+      )}
+
       {toolToggles && onToggleTool && (
         <AgentToggleSection
           items={toggleItems}

@@ -37,8 +37,14 @@ import { SkillDetailPanel } from "../components/SkillDetailPanel";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { BatchTagDialog } from "../components/BatchTagDialog";
 import { SyncDots } from "../components/SyncDots";
+import { SkillNoteEditor } from "../components/SkillNoteEditor";
+import {
+  GitHubRepositoryFilter,
+  type GitHubRepositoryOption,
+} from "../components/GitHubRepositoryFilter";
 import * as api from "../lib/tauri";
 import { getTagActiveColor, getTagColor, UNTAGGED_FILTER } from "../lib/skillTags";
+import { getGitHubRepository, getSkillSummaryLine } from "../lib/skillPresentation";
 import type {
   ManagedSkill,
   ToolInfo,
@@ -132,6 +138,7 @@ export function MySkills() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [filterMode, setFilterMode] = useState<"all" | "enabled" | "available">("all");
   const [sourceFilters, setSourceFilters] = useState<Set<string>>(new Set());
+  const [repositoryFilter, setRepositoryFilter] = useState<string | null>(null);
   const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
   const [allTags, setAllTags] = useState<string[]>([]);
   // Tag management from the filter bar (#233): right-click a tag pill to
@@ -228,16 +235,34 @@ export function MySkills() {
     return displayNames;
   }, [skills]);
 
+  const githubRepositories = useMemo<GitHubRepositoryOption[]>(() => {
+    const counts = new Map<string, number>();
+    for (const skill of skills) {
+      const repository = getGitHubRepository(skill);
+      if (repository) counts.set(repository, (counts.get(repository) || 0) + 1);
+    }
+    return Array.from(counts, ([repository, count]) => ({ repository, count }))
+      .sort((a, b) => a.repository.localeCompare(b.repository));
+  }, [skills]);
+
+  useEffect(() => {
+    if (repositoryFilter && !githubRepositories.some((item) => item.repository === repositoryFilter)) {
+      setRepositoryFilter(null);
+    }
+  }, [githubRepositories, repositoryFilter]);
+
   const filtered = useMemo(() => {
     const result = skills.filter((skill) => {
       const displayName = skillDisplayNames.get(skill.id) || skill.name;
       const matchesSearch =
         skill.name.toLowerCase().includes(search.toLowerCase()) ||
         displayName.toLowerCase().includes(search.toLowerCase()) ||
+        (skill.note || "").toLowerCase().includes(search.toLowerCase()) ||
         (skill.description || "").toLowerCase().includes(search.toLowerCase());
       if (!matchesSearch) return false;
 
       if (sourceFilters.size > 0 && !sourceFilters.has(skill.source_type)) return false;
+      if (repositoryFilter && getGitHubRepository(skill) !== repositoryFilter) return false;
 
       if (tagFilters.size > 0) {
         const wantUntagged = tagFilters.has(UNTAGGED_FILTER);
@@ -271,7 +296,7 @@ export function MySkills() {
     }
 
     return result;
-  }, [skills, skillDisplayNames, search, sourceFilters, tagFilters, filterMode, viewedPreset, presetSkillOrder]);
+  }, [skills, skillDisplayNames, search, sourceFilters, repositoryFilter, tagFilters, filterMode, viewedPreset, presetSkillOrder]);
 
   const {
     isMultiSelect, setIsMultiSelect,
@@ -1056,6 +1081,21 @@ export function MySkills() {
       </div>
 
       <div className="flex flex-wrap items-center gap-1 px-1 -mt-2 -mb-3">
+        <GitHubRepositoryFilter
+          options={githubRepositories}
+          value={repositoryFilter}
+          onChange={setRepositoryFilter}
+          labels={{
+            trigger: t("mySkills.repositoryFilter.trigger"),
+            all: t("mySkills.repositoryFilter.all"),
+            search: t("mySkills.repositoryFilter.search"),
+            empty: t("mySkills.repositoryFilter.empty"),
+            skillCount: (count) => t("mySkills.repositoryFilter.skillCount", { count }),
+          }}
+        />
+        {githubRepositories.length > 0 && (
+          <span className="mx-0.5 h-3 w-px bg-border-subtle" />
+        )}
         {(["local", "import", "git", "skillssh"] as const).map((src) => (
           <button
             key={src}
@@ -1199,8 +1239,9 @@ export function MySkills() {
                     isMultiSelect ? toggleSelect(skill.id) : openSkillDetailById(skill.id)
                   }
                 >
-                  <div className={cn("absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-lg border border-border-subtle bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-all", !isMultiSelect && "group-hover:opacity-100")}>
+                  <div className={cn("absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-lg border border-border-subtle bg-surface px-1 py-0.5 opacity-0 shadow-sm transition-all focus-within:opacity-100", !isMultiSelect && "group-hover:opacity-100")}>
                     {dragHandle}
+                    <SkillNoteEditor skill={skill} onSaved={refreshManagedSkills} />
                     <button
                       onClick={(e) => { e.stopPropagation(); handleCheckUpdate(skill); }}
                       disabled={checkingSkillId === skill.id}
@@ -1231,7 +1272,7 @@ export function MySkills() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-2.5 px-3.5 pr-20 pt-3 pb-1.5">
+                  <div className="flex items-center gap-2.5 px-3.5 pr-28 pt-3 pb-1.5">
                     {isMultiSelect && (
                       selectedIds.has(skill.id)
                         ? <SquareCheck className="h-3.5 w-3.5 shrink-0 text-accent" />
@@ -1246,8 +1287,11 @@ export function MySkills() {
                   </div>
 
                   <div className="px-3.5 pb-3">
-                    <p className="text-[13px] leading-[18px] text-muted truncate">
-                      {skill.description || "—"}
+                    <p
+                      className="text-[13px] leading-[18px] text-muted truncate"
+                      title={getSkillSummaryLine(skill) || undefined}
+                    >
+                      {getSkillSummaryLine(skill) || "—"}
                     </p>
                     {(badge || conflictIds.has(skill.id)) && (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1439,8 +1483,11 @@ export function MySkills() {
                   {displayName}
                 </h3>
 
-                <p className="min-w-0 flex-1 truncate text-[13px] text-muted">
-                  {skill.description || "—"}
+                <p
+                  className="min-w-0 flex-1 truncate text-[13px] text-muted"
+                  title={getSkillSummaryLine(skill) || undefined}
+                >
+                  {getSkillSummaryLine(skill) || "—"}
                 </p>
 
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -1500,7 +1547,7 @@ export function MySkills() {
                   )}
                 </div>
 
-                <div className={cn("flex shrink-0 items-center gap-1 opacity-0 transition-opacity", !isMultiSelect && "group-hover:opacity-100")}>
+                <div className={cn("flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100", !isMultiSelect && "group-hover:opacity-100")}>
                   {isMissingLocalSource && (
                     <>
                       <button
@@ -1531,6 +1578,11 @@ export function MySkills() {
                   >
                     {enabledInPreset ? t("mySkills.enabledButton") : t("mySkills.enable")}
                   </button>
+                  <SkillNoteEditor
+                    skill={skill}
+                    onSaved={refreshManagedSkills}
+                    buttonClassName="p-0.5"
+                  />
                   <button
                     onClick={(e) => { e.stopPropagation(); handleCheckUpdate(skill); }}
                     disabled={checkingSkillId === skill.id}

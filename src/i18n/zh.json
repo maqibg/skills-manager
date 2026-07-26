@@ -386,6 +386,23 @@
       "git": "Git",
       "skillssh": "skills.sh"
     },
+    "repositoryFilter": {
+      "trigger": "GitHub 仓库",
+      "all": "全部 GitHub 仓库",
+      "search": "搜索仓库...",
+      "empty": "没有匹配的仓库",
+      "skillCount": "{{count}} 个"
+    },
+    "note": {
+      "label": "备注",
+      "edit": "编辑备注",
+      "placeholder": "简要说明这个 Skill 的用途...",
+      "characterCount": "{{count}} / {{max}}",
+      "tooLong": "最多 {{max}} 个字符（当前 {{count}}）",
+      "saved": "备注已保存",
+      "saveFailed": "备注保存失败",
+      "originalDescription": "原始描述"
+    },
     "tags": {
       "filter": "标签",
       "allTags": "全部标签",

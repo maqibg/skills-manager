@@ -21,6 +21,7 @@ export interface ManagedSkill {
   id: string;
   name: string;
   description: string | null;
+  note: string | null;
   source_type: string;
   source_ref: string | null;
   source_ref_resolved: string | null;
@@ -351,6 +352,9 @@ export const getAllTags = () => invoke<string[]>("get_all_tags");
 
 export const setSkillTags = (skillId: string, tags: string[]) =>
   invoke<void>("set_skill_tags", { skillId, tags });
+
+export const setSkillNote = (skillId: string, note: string) =>
+  invoke<void>("set_skill_note", { skillId, note });
 
 export const renameTag = (oldName: string, newName: string) =>
   invoke<void>("rename_tag", { oldName, newName });
