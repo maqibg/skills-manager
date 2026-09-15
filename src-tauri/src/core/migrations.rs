@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 8;
+const LATEST_VERSION: u32 = 9;
 
 /// Run all pending migrations on the database.
 ///
@@ -55,6 +55,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         5 => migrate_v5_to_v6(conn),
         6 => migrate_v6_to_v7(conn),
         7 => migrate_v7_to_v8(conn),
+        8 => migrate_v8_to_v9(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -300,8 +301,40 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// v7 → v8: Add user-authored notes kept separate from source descriptions.
+/// v7 → v8: Drop the orphaned `project_default_export_agents` preference.
+///
+/// It was written behind a "save default agents" action that 688fc9b removed
+/// along with the old Add Skills flow, leaving the reader behind. Users who
+/// used that button still carry a frozen subset they can neither see nor
+/// change, and it silently narrows which agents a project preset reaches —
+/// exactly the failure #400 reported, but invisible and unfixable from the UI.
+/// A preference with no way to inspect or edit it is a trap, not a preference.
 fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
+    // A database can reach this step without a settings table (older partial
+    // schemas do), and a cleanup has no business failing an upgrade.
+    let has_settings: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_settings {
+        return Ok(());
+    }
+    conn.execute(
+        "DELETE FROM settings WHERE key = 'project_default_export_agents'",
+        [],
+    )?;
+    Ok(())
+}
+
+/// v8 → v9: Add user-authored notes kept separate from source descriptions.
+///
+/// This fork's notes table originally shipped as v7 → v8, but upstream's own
+/// v7 → v8 is the orphaned-preference cleanup. Keeping the cleanup as v8 and
+/// the notes table as v9 lets a database from either lineage upgrade correctly:
+/// databases that already carry `skill_notes` re-run a no-op
+/// `CREATE TABLE IF NOT EXISTS`.
+fn migrate_v8_to_v9(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS skill_notes (
@@ -421,6 +454,61 @@ mod tests {
             .filter_map(|row| row.ok())
             .collect();
         assert!(tables.contains(&"skill_notes".to_string()));
+    }
+
+    /// Both lineages converge at v9. A database created by upstream is already at
+    /// v8 without `skill_notes` (upstream's v8 is the orphaned-preference
+    /// cleanup), so that step alone would leave the notes table missing forever;
+    /// a database that already carries this fork's notes table must instead
+    /// re-run the v8 → v9 step as a no-op rather than fail on an existing table.
+    #[test]
+    fn test_v8_databases_from_both_lineages_upgrade_to_v9() {
+        let upstream_like = Connection::open_in_memory().unwrap();
+        upstream_like
+            .execute_batch(
+                "
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE skills (id TEXT PRIMARY KEY);
+                CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                PRAGMA user_version = 8;
+                ",
+            )
+            .unwrap();
+        run_migrations(&upstream_like).unwrap();
+        let gained: Vec<String> = upstream_like
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|row| row.ok())
+            .collect();
+        assert!(gained.contains(&"skill_notes".to_string()));
+
+        let fork_like = Connection::open_in_memory().unwrap();
+        fork_like
+            .execute_batch(
+                "
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE skills (id TEXT PRIMARY KEY);
+                CREATE TABLE skill_notes (
+                    skill_id TEXT PRIMARY KEY REFERENCES skills(id) ON DELETE CASCADE,
+                    note TEXT NOT NULL
+                );
+                INSERT INTO skills (id) VALUES ('a');
+                INSERT INTO skill_notes (skill_id, note) VALUES ('a', 'kept');
+                PRAGMA user_version = 8;
+                ",
+            )
+            .unwrap();
+        run_migrations(&fork_like).unwrap();
+        let kept: String = fork_like
+            .query_row(
+                "SELECT note FROM skill_notes WHERE skill_id = 'a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "kept");
     }
 
     #[test]
@@ -543,6 +631,46 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, LATEST_VERSION);
+    }
+
+    #[test]
+    fn orphaned_default_export_agents_setting_is_dropped() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Arrive at v7 the way a real upgrading database does, then plant the
+        // row that the removed UI used to write.
+        conn.pragma_update(None, "user_version", 0).unwrap();
+        run_migrations(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 7).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('project_default_export_agents', ?1)",
+            ["[\"claude_code\",\"codex\"]"],
+        )
+        .unwrap();
+        assert_eq!(count_setting(&conn), 1, "precondition: the row must exist, or this test proves nothing");
+
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(count_setting(&conn), 0, "v7→v8 must delete the orphaned preference");
+        // Unrelated settings must survive.
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('theme', 'dark')",
+            [],
+        )
+        .unwrap();
+        run_migrations(&conn).unwrap();
+        let theme: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'theme'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(theme, "dark");
+    }
+
+    fn count_setting(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = 'project_default_export_agents'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
     }
 
     #[test]

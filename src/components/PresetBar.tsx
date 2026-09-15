@@ -48,11 +48,12 @@ export function PresetBar({
     try {
       const presetSkills = managedSkills.filter((s) => s.preset_ids.includes(preset.id));
       let added = 0, skipped = 0, failed = 0;
+      const failures: string[] = [];
       for (const skill of presetSkills) {
         for (const agentKey of agentKeys) {
           if (existsInWorkspace(skill, agentKey)) { skipped++; continue; }
           try { await onAddSkill(skill, agentKey); added++; }
-          catch { failed++; }
+          catch (e) { failed++; failures.push(getErrorMessage(e, t("common.error"))); }
         }
       }
       if (added > 0) {
@@ -60,7 +61,13 @@ export function PresetBar({
       } else if (failed === 0) {
         toast.info(t("presetActions.nothingToAdd"));
       }
-      if (failed > 0) toast.error(t("presetActions.partialFailedToast", { count: failed }));
+      if (failed > 0) {
+        toast.error(
+          [t("presetActions.partialFailedToast", { count: failed }), failures[0]]
+            .filter(Boolean)
+            .join(" — "),
+        );
+      }
       await onComplete();
     } catch (error) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -74,11 +81,12 @@ export function PresetBar({
     try {
       const presetSkills = managedSkills.filter((s) => s.preset_ids.includes(preset.id));
       let removed = 0, failed = 0;
+      const failures: string[] = [];
       for (const skill of presetSkills) {
         for (const agentKey of agentKeys) {
           if (!existsInWorkspace(skill, agentKey)) continue;
           try { await onRemoveSkill(skill, agentKey); removed++; }
-          catch { failed++; }
+          catch (e) { failed++; failures.push(getErrorMessage(e, t("common.error"))); }
         }
       }
       if (removed > 0) {
@@ -86,7 +94,13 @@ export function PresetBar({
       } else if (failed === 0) {
         toast.info(t("presetActions.nothingToRemove"));
       }
-      if (failed > 0) toast.error(t("presetActions.partialFailedToast", { count: failed }));
+      if (failed > 0) {
+        toast.error(
+          [t("presetActions.partialFailedToast", { count: failed }), failures[0]]
+            .filter(Boolean)
+            .join(" — "),
+        );
+      }
       await onComplete();
     } catch (error) {
       toast.error(getErrorMessage(error, t("common.error")));
@@ -102,7 +116,7 @@ export function PresetBar({
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <span className="shrink-0 text-[12px] text-muted">{t("sidebar.presets")}</span>
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-hide">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {visiblePresets.map((preset) => {
           const s = statuses.get(preset.id)!;
           const presetIcon = getPresetIconOption(preset);

@@ -292,7 +292,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
             displayName={agent.display_name}
             className={cn(
               dim,
-              "rounded-[6px] border border-bg-secondary bg-surface shadow-[0_0_0_1px_var(--color-border-subtle)]",
+              "rounded-[4px] border border-bg-secondary bg-surface shadow-[0_0_0_1px_var(--color-border-subtle)]",
             )}
           />
         ))}
@@ -300,7 +300,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
           <span
             className={cn(
               dim,
-              "inline-flex items-center justify-center rounded-[6px] border border-bg-secondary bg-surface text-[10px] font-semibold text-muted shadow-[0_0_0_1px_var(--color-border-subtle)]",
+              "inline-flex items-center justify-center rounded-[4px] border border-bg-secondary bg-surface text-[10px] font-semibold text-muted shadow-[0_0_0_1px_var(--color-border-subtle)]",
             )}
             title={`+${hiddenCount}`}
           >
@@ -331,14 +331,16 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
     setInstalling(true);
     let ok = 0;
     let failed = 0;
+    const failures: string[] = [];
     try {
       if (target.kind === "global") {
         for (const id of selectableSelected) {
           try {
             await api.syncSkillToTool(id, target.agentKey);
             ok++;
-          } catch {
+          } catch (e) {
             failed++;
+            failures.push(getErrorMessage(e, t("common.error")));
           }
         }
       } else {
@@ -356,8 +358,9 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
             if (agents.length === 0) continue;
             await api.exportSkillToProject(id, target.projectId, agents);
             ok++;
-          } catch {
+          } catch (e) {
             failed++;
+            failures.push(getErrorMessage(e, t("common.error")));
           }
         }
       }
@@ -366,7 +369,17 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
         setSelectedIds(new Set());
       }
       if (failed > 0) {
-        toast.error(t("addFromLibrary.toastFailed", { count: failed }));
+        // Surface why. A refusal carries the path it protected and what to do
+        // about it (#363); collapsing that to a bare count leaves the user with
+        // no idea which skill failed or how to resolve it.
+        const detail = failures[0];
+        toast.error(
+          failed === 1 && detail
+            ? detail
+            : [t("addFromLibrary.toastFailed", { count: failed }), detail]
+                .filter(Boolean)
+                .join(" — "),
+        );
       }
       await onInstalled();
       if (failed === 0) onClose();
@@ -517,7 +530,7 @@ function AddSkillsSheetBody({ onClose, target, managedSkills, onInstalled }: Pro
           <button
             onClick={onClose}
             disabled={installing}
-            className="shrink-0 rounded-[4px] p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
+            className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
           >
             <X className="h-4 w-4" />
           </button>

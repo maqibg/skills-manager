@@ -20,21 +20,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-            label: macOS-arm64
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-            label: macOS-x64
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            label: Linux-x64
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             label: Windows-x64
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.label }})
+    # This fork ships Windows builds only, so the matrix has a single leg. A
+    # healthy Windows build takes ~17 minutes; an hour caps a hang while leaving
+    # real headroom.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -65,22 +60,19 @@ jobs:
           # failure at negligible cost. See v1.22.3 Windows-x64 run.
           save-if: false
 
-      - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Windows smoke check
         if: matrix.platform == 'windows-latest'
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Build CLI binary
+        run: >-
+          cargo build --release
+          --manifest-path src-tauri/Cargo.toml
+          --bin skills-manager-cli
+          --target ${{ matrix.target }}
 
       - name: Extract changelog for current version
         id: changelog
@@ -117,7 +109,7 @@ jobs:
             echo ""
             echo "### 当前校验状态"
             echo ""
-            echo "- ✅ 跨平台构建通过（macOS Intel / macOS ARM / Windows x64 / Linux x64）"
+            echo "- ✅ Windows x64 构建通过"
             echo "- ✅ TypeScript typecheck 通过"
             echo ""
             echo "---"
@@ -131,7 +123,7 @@ jobs:
             echo ""
             echo "### Current Verification"
             echo ""
-            echo "- ✅ Cross-platform build passed (macOS Intel / macOS ARM / Windows x64 / Linux x64)"
+            echo "- ✅ Windows x64 build passed"
             echo "- ✅ TypeScript typecheck passed"
             echo ""
             echo "</details>"
@@ -150,31 +142,37 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Ad-hoc sign macOS bundles so Gatekeeper reports "unverified developer"
-          # (dismissable via right-click → Open) instead of "app is damaged".
-          # Without this, the linker-only signature has no sealed resources and
-          # `codesign --verify` fails. See issue #138.
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos') && '-' || '' }}
         with:
           tagName: v__VERSION__
           releaseName: 'Skills Manager v__VERSION__'
           releaseBody: ${{ steps.changelog.outputs.body }}
-          releaseDraft: false
+          # Publish only after the build is verified: tauri-action creates the
+          # release as a draft, and the publish-release job flips it public only
+          # once verify-updater-assets passes.
+          releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target ${{ matrix.target }}
 
-      - name: Verify macOS bundle signature
-        if: startsWith(matrix.platform, 'macos')
+      - name: Upload CLI binary to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          APP_PATH="src-tauri/target/${{ matrix.target }}/release/bundle/macos/skills-manager.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "Expected app bundle not found at $APP_PATH" >&2
-            exit 1
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            CLI_PATH="src-tauri/target/${{ matrix.target }}/release/skills-manager-cli.exe"
+            CLI_ASSET="skills-manager-cli-${{ matrix.label }}.exe"
+          else
+            CLI_PATH="src-tauri/target/${{ matrix.target }}/release/skills-manager-cli"
+            CLI_ASSET="skills-manager-cli-${{ matrix.label }}"
           fi
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          codesign -dvvv "$APP_PATH" 2>&1 | grep -E 'Signature|Sealed Resources|Identifier'
+          CLI_UPLOAD="$RUNNER_TEMP/$CLI_ASSET"
+          cp "$CLI_PATH" "$CLI_UPLOAD"
+          gh release upload "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            "$CLI_UPLOAD" --clobber
 
   verify-updater-assets:
     needs: build
@@ -185,41 +183,106 @@ jobs:
       - name: Validate updater metadata and signatures
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
 
-          api_url="https://api.github.com/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}"
-          release_json=$(curl -fsSL \
+          # The release is still a draft at this point, and /releases/tags/{tag}
+          # returns 404 for drafts, so it has to be located by listing.
+          releases_json=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "$api_url")
+            "https://api.github.com/repos/${REPO}/releases?per_page=100")
+
+          release_json=$(echo "$releases_json" | jq --arg t "$TAG" '.[] | select(.tag_name == $t)')
+          if [ -z "$release_json" ]; then
+            echo "No release found for tag ${TAG}" >&2
+            exit 1
+          fi
 
           asset_names=$(echo "$release_json" | jq -r '.assets[]?.name')
+          echo "Assets on the draft release:"
+          echo "$asset_names" | sed 's/^/  /'
 
           if ! echo "$asset_names" | grep -qx 'latest.json'; then
-            echo "Missing updater metadata asset: latest.json"
+            echo "Missing updater metadata asset: latest.json" >&2
             exit 1
           fi
 
           if ! echo "$asset_names" | grep -q '\.sig'; then
-            echo "Missing updater signature assets (*.sig)"
+            echo "Missing updater signature assets (*.sig)" >&2
             exit 1
           fi
 
-          latest_url="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/latest.json"
-          curl -fsSL "$latest_url" >/tmp/latest.json
+          fail=0
+          for cli_asset in \
+            skills-manager-cli-Windows-x64.exe; do
+            if ! echo "$asset_names" | grep -qx "$cli_asset"; then
+              echo "Missing CLI release asset: ${cli_asset}" >&2
+              fail=1
+            fi
+          done
 
-          if ! jq -e 'has("platforms") and (.platforms | has("windows-x86_64"))' /tmp/latest.json >/dev/null; then
-            echo "latest.json does not include windows-x86_64 updater entry"
-            cat /tmp/latest.json
-            exit 1
-          fi
+          # Draft assets are not served from the public download host, so fetch
+          # latest.json through the authenticated asset endpoint.
+          asset_id=$(echo "$release_json" | jq -r '.assets[] | select(.name == "latest.json") | .id')
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${REPO}/releases/assets/${asset_id}" -o /tmp/latest.json
 
-          if ! jq -e '.platforms["windows-x86_64"].signature and .platforms["windows-x86_64"].url' /tmp/latest.json >/dev/null; then
-            echo "windows-x86_64 updater entry is missing signature/url"
-            cat /tmp/latest.json
+          # v1.29.0 published with no entries for a platform that was actually
+          # built, so the single updater target this fork ships is asserted here.
+          for platform in windows-x86_64; do
+            if ! jq -e --arg p "$platform" '.platforms[$p].signature and .platforms[$p].url' /tmp/latest.json >/dev/null; then
+              echo "latest.json is missing a signed updater entry for ${platform}" >&2
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "--- latest.json ---" >&2
+            cat /tmp/latest.json >&2
             exit 1
           fi
 
           echo "Updater assets validation passed"
+
+  publish-release:
+    needs: [build, verify-updater-assets]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Publish release
+    steps:
+      # Every build in the matrix finished and was verified by this point, so
+      # this is the step that actually makes the release visible to users.
+      - name: Publish the verified draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release edit "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --draft=false
+          echo "Published ${{ github.ref_name }}"
+
+      # skillsmanager.dev reads the version and download links from the GitHub
+      # API behind an hourly ISR cache, so a low-traffic page can advertise the
+      # previous release long after it shipped. Rebuilding on publish keeps the
+      # site in step. The hook is optional, and a failed rebuild must not turn a
+      # successful release red — the site catches up on its own within the hour.
+      - name: Rebuild skillsmanager.dev
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "VERCEL_DEPLOY_HOOK_URL not set — skipping site rebuild."
+            exit 0
+          fi
+          if curl -fsS -X POST "$HOOK" -o /dev/null; then
+            echo "Triggered a skillsmanager.dev rebuild."
+          else
+            echo "::warning::Deploy hook failed; skillsmanager.dev will refresh on its own."
+          fi

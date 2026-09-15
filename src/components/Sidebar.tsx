@@ -48,7 +48,7 @@ export function Sidebar() {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const { presets, viewedPreset, setViewedPresetId, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills } = useApp();
+  const { presets, viewedPreset, setViewedPresetId, refreshPresets, refreshManagedSkills, projects, refreshProjects, tools, managedSkills, appUpdate } = useApp();
   const [showCreate, setShowCreate] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; icon?: string | null } | null>(null);
@@ -276,7 +276,7 @@ export function Sidebar() {
                 <Link
                   to={group.basePath}
                   className={cn(
-                    "mb-0.5 flex items-center gap-2 px-2.5 py-[7px] rounded-[5px] text-sm transition-colors outline-none",
+                    "mb-0.5 flex items-center gap-2 px-2.5 py-[7px] rounded-md text-sm transition-colors outline-none",
                     isActive
                       ? "bg-surface-active font-medium text-primary"
                       : "text-tertiary hover:text-secondary hover:bg-surface-hover"
@@ -315,7 +315,7 @@ export function Sidebar() {
                                 ref={provided.innerRef}
                                 {...provided.draggableProps}
                                 className={cn(
-                                  "group relative flex items-center rounded-[5px] transition-colors",
+                                  "group relative flex items-center rounded-md transition-colors",
                                   isActive ? "bg-surface-active" : "hover:bg-surface-hover"
                                 )}
                               >
@@ -347,7 +347,7 @@ export function Sidebar() {
                                   </span>
                                 </button>
                                 <div className={cn(
-                                  "absolute right-1 flex items-center rounded-[3px] invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover"
                                 )}>
                                   <div
@@ -401,7 +401,7 @@ export function Sidebar() {
                 key={item.path}
                 to={item.path}
                 className={cn(
-                  "flex items-center gap-2.5 px-2.5 py-[7px] rounded-[5px] text-sm font-medium transition-colors outline-none",
+                  "flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-sm font-medium transition-colors outline-none",
                   isActive
                     ? "bg-surface-active text-primary"
                     : "text-tertiary hover:text-secondary hover:bg-surface-hover"
@@ -455,7 +455,7 @@ export function Sidebar() {
                                 ref={provided.innerRef}
                                 {...provided.draggableProps}
                                 className={cn(
-                                  "group relative flex items-center rounded-[5px] transition-colors",
+                                  "group relative flex items-center rounded-md transition-colors",
                                   isActive ? "bg-surface-active" : "hover:bg-surface-hover"
                                 )}
                               >
@@ -493,7 +493,7 @@ export function Sidebar() {
                                   </span>
                                 </button>
                                 <div className={cn(
-                                  "absolute right-1 flex items-center rounded-[3px] invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover"
                                 )}>
                                   <div
@@ -529,7 +529,7 @@ export function Sidebar() {
               </DragDropContext>
               <button
                 onClick={() => setShowCreate(true)}
-                className="flex items-center gap-2 px-2.5 py-[7px] mt-1 rounded-[5px] text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-colors w-full outline-none"
+                className="flex items-center gap-2 px-2.5 py-[7px] mt-1 rounded-md text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-colors w-full outline-none"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {t("sidebar.newPreset")}
@@ -612,7 +612,7 @@ export function Sidebar() {
                                 ref={provided.innerRef}
                                 {...provided.draggableProps}
                                 className={cn(
-                                  "group relative flex items-center rounded-[5px] transition-colors",
+                                  "group relative flex items-center rounded-md transition-colors",
                                   isActive ? "bg-surface-active" : "hover:bg-surface-hover"
                                 )}
                               >
@@ -660,7 +660,7 @@ export function Sidebar() {
                                   </span>
                                 </button>
                                 <div className={cn(
-                                  "absolute right-1 flex items-center rounded-[3px] invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
+                                  "absolute right-1 flex items-center rounded-md invisible opacity-0 transition-opacity group-hover:visible group-hover:opacity-100",
                                   isActive ? "bg-surface-active" : "bg-surface-hover"
                                 )}>
                                   <div
@@ -693,7 +693,7 @@ export function Sidebar() {
               </DragDropContext>
               <button
                 onClick={() => setShowAddProject(true)}
-                className="flex items-center gap-2 px-2.5 py-[7px] mt-1 rounded-[5px] text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-colors w-full outline-none"
+                className="flex items-center gap-2 px-2.5 py-[7px] mt-1 rounded-md text-sm text-muted hover:text-secondary hover:bg-surface-hover transition-colors w-full outline-none"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {t("sidebar.addProject")}
@@ -708,7 +708,7 @@ export function Sidebar() {
           <Link
             to="/settings"
             className={cn(
-              "flex items-center gap-2.5 px-2.5 py-[7px] rounded-[5px] text-sm font-medium transition-colors outline-none",
+              "flex items-center gap-2.5 px-2.5 py-[7px] rounded-md text-sm font-medium transition-colors outline-none",
               location.pathname === "/settings"
                 ? "bg-surface-active text-primary"
                 : "text-tertiary hover:text-secondary hover:bg-surface-hover"
@@ -721,6 +721,14 @@ export function Sidebar() {
               )}
             />
             {t("sidebar.settings")}
+            {/* A newer app version exists. Amber = "有更新" per the UI spec;
+                the dot only points at Settings, where the user decides. */}
+            {appUpdate?.has_update && (
+              <span
+                className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                title={t("settings.updateAvailable", { version: appUpdate.latest_version })}
+              />
+            )}
           </Link>
         </div>
       </div>
